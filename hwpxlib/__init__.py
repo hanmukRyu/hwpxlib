@@ -1,4 +1,4 @@
-"""Top-level package for hwpxlib Python utilities."""
+
 
 from .hwpxfile import (
     HWPXFile,
