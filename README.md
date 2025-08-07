@@ -28,6 +28,25 @@
 * hwp파일을 hwpx파일로 변환하는 라이브러리는 https://github.com/neolord0/hwp2hwpx 을 참조해 주세요.
 * hwpxlib의 확장 라이브러리는 https://github.com/neolord0/hwpxlib_ext 을 참조해 주세요.
 
+## Python usage
+
+간단한 Python 모듈을 포함하여 Java 라이브러리의 `Reader` 와 `Writer` 기능을 흉내냅니다.
+
+```java
+HwpxReader reader = new HwpxReader();
+HwpxFile file = reader.read("input.hwpx");
+
+HwpxWriter writer = new HwpxWriter();
+writer.write(file, "output.hwpx");
+```
+
+```python
+from hwpxlib import HwpxArchive
+
+archive = HwpxArchive.read("input.hwpx")
+archive.write("output.hwpx")
+```
+
 2025.05.23
 =========================================================================================
 * pull request #21 : TrackChageConfig에 configItemSet 객체 추가..
