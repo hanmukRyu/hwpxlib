@@ -1,5 +1,8 @@
 
 
+"""Public package interface for :mod:`hwpxlib`."""
+
+from .archive import HwpxArchive, read_hwpx, write_hwpx
 from .hwpxfile import (
     HWPXFile,
     Version,
@@ -15,15 +18,18 @@ from .hwpxfile import (
 )
 
 __all__ = [
-    'HWPXFile',
-    'Version',
-    'Manifest',
-    'Container',
-    'Content',
-    'Header',
-    'MasterPages',
-    'Sections',
-    'Settings',
-    'History',
-    'Charts',
+    "HwpxArchive",
+    "read_hwpx",
+    "write_hwpx",
+    "HWPXFile",
+    "Version",
+    "Manifest",
+    "Container",
+    "Content",
+    "Header",
+    "MasterPages",
+    "Sections",
+    "Settings",
+    "History",
+    "Charts",
 ]
