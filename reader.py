@@ -14,7 +14,7 @@ files.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import zipfile
 from xml.etree import ElementTree as ET
 
@@ -41,6 +41,7 @@ class HWPXFile:
     content_files: Dict[str, ET.ElementTree] = field(default_factory=dict)
     binary_files: Dict[str, bytes] = field(default_factory=dict)
     charts: Dict[str, bytes] = field(default_factory=dict)
+    all_files: Dict[str, bytes] = field(default_factory=dict)  # 모든 ZIP 항목 저장
 
 
 class HWPXReader:
@@ -60,6 +61,15 @@ class HWPXReader:
             _check_mimetype(zf)
 
             hwpx = HWPXFile()
+            
+            # 먼저 모든 ZIP 항목을 읽어서 저장
+            for filename in zf.namelist():
+                try:
+                    hwpx.all_files[filename] = zf.read(filename)
+                except KeyError:
+                    pass
+            
+            # 기존 구조적 파싱 로직 유지
             hwpx.version_xml = _read_xml(zf, "version.xml")
             hwpx.container_xml = _read_xml(zf, "META-INF/container.xml")
             hwpx.manifest_xml = _read_xml(zf, "META-INF/manifest.xml")
@@ -112,7 +122,7 @@ def _read_xml(zf: zipfile.ZipFile, name: str) -> Optional[ET.ElementTree]:
         return None
 
 
-def _parse_container(container_xml: Optional[ET.ElementTree]) -> (Optional[str], List[str]):
+def _parse_container(container_xml: Optional[ET.ElementTree]) -> Tuple[Optional[str], List[str]]:
     """Extract package path and attachment file paths from ``container.xml``."""
 
     package_path: Optional[str] = None
