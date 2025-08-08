@@ -4,9 +4,9 @@
 기존의 reader, writer, text_extractor 모듈들을 조합하여 사용합니다.
 """
 
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Dict, Any
 import xml.etree.ElementTree as ET
-from xml.etree import ElementTree
+import io
 import re
 
 from reader import HWPXReader, MIMETYPE
@@ -14,6 +14,21 @@ from writer import HwpxWriter
 from text_extractor import extract_text
 
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+
+
+def _register_namespaces_from_bytes(data: bytes) -> None:
+    """Register namespace prefixes found in *data* with ``ElementTree``.
+
+    This preserves the original namespace prefixes when serialising the XML
+    back to strings.
+    """
+
+    try:
+        for _, (prefix, uri) in ET.iterparse(io.BytesIO(data), events=("start-ns",)):
+            ET.register_namespace(prefix, uri)
+    except ET.ParseError:
+        # If the original XML is malformed or empty, simply skip registration.
+        pass
 
 
 def modify_hwpx_text(
@@ -149,25 +164,32 @@ def _modify_text_simple(hwpx, text_modifier: Callable[[str], str]) -> None:
 
 def _save_modified_hwpx(hwpx, output_path: str) -> None:
     """수정된 HWPX 파일을 저장합니다."""
-    # XML 트리들을 문자열로 변환
-    version_xml = ET.tostring(hwpx.version_xml.getroot(), encoding="unicode")
-    container_xml = ET.tostring(hwpx.container_xml.getroot(), encoding="unicode")
-    manifest_xml = ET.tostring(hwpx.manifest_xml.getroot(), encoding="unicode")
-    content_hpf = ET.tostring(hwpx.content_hpf.getroot(), encoding="unicode")
-    
     # 모든 파일을 all_files에서 시작 (복사본 생성)
     files = dict(hwpx.all_files)
-    
-    # 수정된 XML 파일들로 덮어쓰기 (바이너리로 저장)
-    files["version.xml"] = version_xml.encode("utf-8")
-    files["META-INF/container.xml"] = container_xml.encode("utf-8") 
-    files["META-INF/manifest.xml"] = manifest_xml.encode("utf-8")
-    files["Contents/content.hpf"] = content_hpf.encode("utf-8")
-    
-    # 수정된 콘텐츠 파일들 덮어쓰기
+
+    def _serialize(name: str, tree: ET.ElementTree) -> str:
+        original = files.get(name, b"")
+        _register_namespaces_from_bytes(original)
+        xml_bytes = ET.tostring(
+            tree.getroot(), encoding="utf-8", xml_declaration=True
+        )
+        files[name] = xml_bytes
+        return xml_bytes.decode("utf-8")
+
+    # 핵심 XML 파일 직렬화
+    version_xml = _serialize("version.xml", hwpx.version_xml)
+    container_xml = _serialize("META-INF/container.xml", hwpx.container_xml)
+    manifest_xml = _serialize("META-INF/manifest.xml", hwpx.manifest_xml)
+    content_hpf = _serialize("Contents/content.hpf", hwpx.content_hpf)
+
+    # 수정된 콘텐츠 파일들 직렬화
     for name, tree in hwpx.content_files.items():
-        files[name] = ET.tostring(tree.getroot(), encoding="utf-8")
-    
+        original = files.get(name, b"")
+        _register_namespaces_from_bytes(original)
+        files[name] = ET.tostring(
+            tree.getroot(), encoding="utf-8", xml_declaration=True
+        )
+
     # HwpxWriter에는 핵심 XML만 전달하고, files에는 모든 파일 전달
     # 중복을 피하기 위해 핵심 XML들을 files에서 제거
     core_files = {
@@ -175,9 +197,9 @@ def _save_modified_hwpx(hwpx, output_path: str) -> None:
         "META-INF/container.xml": files.pop("META-INF/container.xml", b""),
         "META-INF/manifest.xml": files.pop("META-INF/manifest.xml", b""),
         "Contents/content.hpf": files.pop("Contents/content.hpf", b""),
-        "mimetype": files.pop("mimetype", b"")
+        "mimetype": files.pop("mimetype", b""),
     }
-    
+
     # Writer로 저장
     writer = HwpxWriter(
         version_xml=version_xml,
@@ -187,7 +209,7 @@ def _save_modified_hwpx(hwpx, output_path: str) -> None:
         files=files,  # 핵심 파일들 제외한 나머지 파일들
         mimetype=MIMETYPE,
     )
-    
+
     writer.write(output_path)
 
 
