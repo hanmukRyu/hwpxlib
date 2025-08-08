@@ -16,6 +16,31 @@ from text_extractor import extract_text
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 
 
+def _register_hwpx_namespaces():
+    """HWPX 파일에서 사용되는 네임스페이스들을 등록하여 prefix를 보존합니다."""
+    # 한글 HWPX 네임스페이스들
+    ET.register_namespace('ha', 'http://www.hancom.co.kr/hwpml/2011/app')
+    ET.register_namespace('hp', 'http://www.hancom.co.kr/hwpml/2011/paragraph')
+    ET.register_namespace('hp10', 'http://www.hancom.co.kr/hwpml/2016/paragraph')
+    ET.register_namespace('hs', 'http://www.hancom.co.kr/hwpml/2011/section')
+    ET.register_namespace('hc', 'http://www.hancom.co.kr/hwpml/2011/core')
+    ET.register_namespace('hh', 'http://www.hancom.co.kr/hwpml/2011/head')
+    ET.register_namespace('hhs', 'http://www.hancom.co.kr/hwpml/2011/history')
+    ET.register_namespace('hm', 'http://www.hancom.co.kr/hwpml/2011/master-page')
+    ET.register_namespace('hpf', 'http://www.hancom.co.kr/schema/2011/hpf')
+    ET.register_namespace('hv', 'http://www.hancom.co.kr/hwpml/2011/version')
+    ET.register_namespace('hwpunitchar', 'http://www.hancom.co.kr/hwpml/2016/HwpUnitChar')
+    ET.register_namespace('ooxmlchart', 'http://www.hancom.co.kr/hwpml/2016/ooxmlchart')
+    
+    # 표준 네임스페이스들
+    ET.register_namespace('dc', 'http://purl.org/dc/elements/1.1/')
+    ET.register_namespace('config', 'urn:oasis:names:tc:opendocument:xmlns:config:1.0')
+    ET.register_namespace('epub', 'http://www.idpf.org/2007/ops')
+    ET.register_namespace('opf', 'http://www.idpf.org/2007/opf/')
+    ET.register_namespace('ocf', 'urn:oasis:names:tc:opendocument:xmlns:container')
+    ET.register_namespace('odf', 'urn:oasis:names:tc:opendocument:xmlns:manifest:1.0')
+
+
 def modify_hwpx_text(input_path: str, output_path: str, modifier_func) -> None:
     """HWPX 파일의 텍스트를 사용자 정의 함수로 수정합니다.
     
@@ -26,13 +51,30 @@ def modify_hwpx_text(input_path: str, output_path: str, modifier_func) -> None:
     """
     hwpx = HWPXReader.read(input_path)
     
+    # 수정된 파일들을 추적하기 위한 세트 초기화
+    if not hasattr(hwpx, 'modified_files'):
+        hwpx.modified_files = set()
+    
     # 각 section의 텍스트 수정
     for name, tree in hwpx.content_files.items():
+        has_modifications = False
         for elem in tree.iter():
             if elem.text:
-                elem.text = modifier_func(elem.text)
+                original_text = elem.text
+                modified_text = modifier_func(elem.text)
+                if original_text != modified_text:
+                    elem.text = modified_text
+                    has_modifications = True
             if elem.tail:
-                elem.tail = modifier_func(elem.tail)
+                original_tail = elem.tail
+                modified_tail = modifier_func(elem.tail)
+                if original_tail != modified_tail:
+                    elem.tail = modified_tail
+                    has_modifications = True
+        
+        # 수정사항이 있으면 modified_files에 추가
+        if has_modifications:
+            hwpx.modified_files.add(name)
     
     _save_modified_hwpx(hwpx, output_path, input_path)
 
@@ -144,6 +186,9 @@ def _modify_text_simple(hwpx, text_modifier: Callable[[str], str]) -> None:
 def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> None:
     """수정된 HWPX 파일을 저장합니다 (네임스페이스 보존)."""
     
+    # 한글 HWPX 네임스페이스 등록 (prefix 보존)
+    _register_hwpx_namespaces()
+    
     # 호환성 개선 Writer 사용 (네임스페이스 보존 기능 포함)
     if original_path:
         try:
@@ -156,16 +201,16 @@ def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> No
     # 개선된 방식: 원본 XML 문자열 사용 (네임스페이스 보존)
     # 수정되지 않은 XML들은 원본 문자열 사용, 수정된 것들만 새로 생성
     version_xml = hwpx.original_xml_strings.get("version.xml", 
-        ET.tostring(hwpx.version_xml.getroot(), encoding="unicode", xml_declaration=True))
+        ET.tostring(hwpx.version_xml.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
     
     container_xml = hwpx.original_xml_strings.get("META-INF/container.xml",
-        ET.tostring(hwpx.container_xml.getroot(), encoding="unicode", xml_declaration=True))
+        ET.tostring(hwpx.container_xml.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
     
     manifest_xml = hwpx.original_xml_strings.get("META-INF/manifest.xml",
-        ET.tostring(hwpx.manifest_xml.getroot(), encoding="unicode", xml_declaration=True))
+        ET.tostring(hwpx.manifest_xml.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
     
     content_hpf = hwpx.original_xml_strings.get("Contents/content.hpf",
-        ET.tostring(hwpx.content_hpf.getroot(), encoding="unicode", xml_declaration=True))
+        ET.tostring(hwpx.content_hpf.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
     
     # HwpxWriter를 사용하지 않고 직접 ZIP 파일 생성 (네임스페이스 보존)
     import zipfile
@@ -205,13 +250,16 @@ def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> No
         
         # 수정된 콘텐츠 파일들 (section XML들)
         for name, tree in hwpx.content_files.items():
-            # 원본 XML 문자열이 있으면 사용, 없으면 ElementTree에서 생성
-            if name in hwpx.original_xml_strings:
-                # TODO: 실제로 텍스트가 수정되었는지 확인하는 로직 필요
-                # 지금은 항상 새로 생성
-                xml_content = ET.tostring(tree.getroot(), encoding="utf-8")
+            # 수정된 파일인지 확인
+            if hasattr(hwpx, 'modified_files') and name in hwpx.modified_files:
+                # 수정된 파일은 새로 직렬화 (네임스페이스 prefix 보존)
+                xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+            elif name in hwpx.original_xml_strings:
+                # 수정되지 않은 파일은 원본 문자열 사용
+                xml_content = hwpx.original_xml_strings[name].encode('utf-8')
             else:
-                xml_content = ET.tostring(tree.getroot(), encoding="utf-8")
+                # 원본 문자열이 없으면 새로 직렬화
+                xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
             
             info = zipfile.ZipInfo(name)
             info.compress_type = compression_info.get(name, zipfile.ZIP_DEFLATED)

@@ -69,6 +69,66 @@ class CompatibleHwpxWriter:
         else:
             raise TypeError(f"지원하지 않는 데이터 타입: {type(data)}")
 
+def _preserve_namespace_with_text_changes(original_xml: str, modified_tree) -> str:
+    """원본 XML 문자열에서 텍스트만 수정하여 네임스페이스를 보존합니다."""
+    import re
+    import uuid
+    from xml.etree import ElementTree as ET
+    
+    # 1. 수정된 트리에서 모든 텍스트 추출 (순서 보장)
+    modified_texts = []
+    
+    def extract_texts_from_tree(element):
+        """ElementTree에서 텍스트 요소들을 문서 순서대로 추출"""
+        if element.tag.endswith("}t") or ":t" in element.tag:  # 텍스트 태그
+            if element.text:
+                modified_texts.append(element.text)
+        
+        # 자식 요소들도 순서대로 처리
+        for child in element:
+            extract_texts_from_tree(child)
+    
+    extract_texts_from_tree(modified_tree.getroot())
+    
+    # 2. 원본 XML에서 텍스트를 고유 토큰으로 치환
+    text_tokens = {}
+    text_index = 0
+    
+    def tokenize_text(match):
+        nonlocal text_index
+        if text_index < len(modified_texts):
+            # 고유 토큰 생성
+            token = f"__TEXT_{uuid.uuid4().hex[:8]}__"
+            # 수정된 텍스트를 토큰과 매핑
+            modified_text = modified_texts[text_index]
+            # XML 특수문자 이스케이프
+            escaped_text = (modified_text
+                          .replace('&', '&amp;')
+                          .replace('<', '&lt;')
+                          .replace('>', '&gt;')
+                          .replace('"', '&quot;')
+                          .replace("'", '&apos;'))
+            text_tokens[token] = escaped_text
+            text_index += 1
+            return f"{match.group(1)}{token}{match.group(3)}"
+        return match.group(0)  # 변경사항 없음
+    
+    # 3. 텍스트 태그의 내용을 토큰으로 치환
+    tokenized_xml = re.sub(
+        r'(<[^>]*:t[^>]*>)(.*?)(<\/[^>]*:t>)', 
+        tokenize_text, 
+        original_xml, 
+        flags=re.DOTALL
+    )
+    
+    # 4. 토큰을 수정된 텍스트로 복원
+    final_xml = tokenized_xml
+    for token, modified_text in text_tokens.items():
+        final_xml = final_xml.replace(token, modified_text)
+    
+    return final_xml
+
+
 def extract_compression_info(hwpx_file_path: str) -> Dict[str, int]:
     """원본 HWPX 파일에서 각 파일의 압축 방식 정보를 추출합니다."""
     compression_info = {}
@@ -121,7 +181,8 @@ def save_modified_hwpx_compatible(hwpx, output_path: str, original_path: str) ->
             # 텍스트 수정이 없는 경우 원본 XML 문자열 사용 (네임스페이스 보존)
             xml_content = hwpx.original_xml_strings[name]
         else:
-            # 텍스트 수정이 있거나 원본이 없는 경우 ElementTree 사용
+            # 텍스트 수정이 있는 경우: 임시로 ElementTree 사용 (향후 개선 예정)
+            # TODO: 토큰 기반 방식의 정규식 패턴을 더 정교하게 개선 필요
             xml_content = ET.tostring(tree.getroot(), encoding="unicode", xml_declaration=True)
         files[name] = xml_content.encode("utf-8")
     

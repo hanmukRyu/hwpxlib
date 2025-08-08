@@ -147,8 +147,13 @@ def analyze_xml_differences(original_dir, saved_dir):
 
 def main():
     """메인 함수"""
-    original_file = "../testFile/reader_writer/sample1.hwpx"
-    saved_file = "../test_save_only_output.hwpx"
+    import sys
+    if len(sys.argv) >= 3:
+        original_file = sys.argv[1]
+        saved_file = sys.argv[2]
+    else:
+        original_file = "../sample.hwpx"
+        saved_file = "../sample_upper_token.hwpx"
     
     # 추출 디렉토리
     original_dir = "original_components"
