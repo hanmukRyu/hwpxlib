@@ -42,6 +42,9 @@ class HWPXFile:
     binary_files: Dict[str, bytes] = field(default_factory=dict)
     charts: Dict[str, bytes] = field(default_factory=dict)
     all_files: Dict[str, bytes] = field(default_factory=dict)  # 모든 ZIP 항목 저장
+    
+    # 원본 XML 문자열들 (네임스페이스 보존용)
+    original_xml_strings: Dict[str, str] = field(default_factory=dict)
 
 
 class HWPXReader:
@@ -69,10 +72,18 @@ class HWPXReader:
                 except KeyError:
                     pass
             
-            # 기존 구조적 파싱 로직 유지
-            hwpx.version_xml = _read_xml(zf, "version.xml")
-            hwpx.container_xml = _read_xml(zf, "META-INF/container.xml")
-            hwpx.manifest_xml = _read_xml(zf, "META-INF/manifest.xml")
+            # 기존 구조적 파싱 로직 유지 (원본 XML 문자열도 함께 저장)
+            hwpx.version_xml, version_xml_str = _read_xml_with_original(zf, "version.xml")
+            if version_xml_str:
+                hwpx.original_xml_strings["version.xml"] = version_xml_str
+                
+            hwpx.container_xml, container_xml_str = _read_xml_with_original(zf, "META-INF/container.xml")
+            if container_xml_str:
+                hwpx.original_xml_strings["META-INF/container.xml"] = container_xml_str
+                
+            hwpx.manifest_xml, manifest_xml_str = _read_xml_with_original(zf, "META-INF/manifest.xml")
+            if manifest_xml_str:
+                hwpx.original_xml_strings["META-INF/manifest.xml"] = manifest_xml_str
 
             package_path, attachments = _parse_container(hwpx.container_xml)
             for attach in attachments:
@@ -82,12 +93,17 @@ class HWPXReader:
                     pass
 
             if package_path:
-                hwpx.content_hpf = _read_xml(zf, package_path)
+                hwpx.content_hpf, content_hpf_str = _read_xml_with_original(zf, package_path)
+                if content_hpf_str:
+                    hwpx.original_xml_strings[package_path] = content_hpf_str
+                    
                 for item in _parse_content_manifest(hwpx.content_hpf):
                     if item.media_type == "application/xml":
-                        tree = _read_xml(zf, item.href)
+                        tree, xml_string = _read_xml_with_original(zf, item.href)
                         if tree is not None:
                             hwpx.content_files[item.href] = tree
+                            if xml_string:
+                                hwpx.original_xml_strings[item.href] = xml_string
                             _extract_charts(tree, zf, hwpx)
                     else:
                         try:
@@ -120,6 +136,21 @@ def _read_xml(zf: zipfile.ZipFile, name: str) -> Optional[ET.ElementTree]:
             return ET.parse(fp)
     except KeyError:
         return None
+
+
+def _read_xml_with_original(zf: zipfile.ZipFile, name: str) -> Tuple[Optional[ET.ElementTree], Optional[str]]:
+    """XML 파일을 읽고 ElementTree와 원본 문자열을 모두 반환합니다."""
+    try:
+        xml_data = zf.read(name)
+        xml_string = xml_data.decode('utf-8')
+        
+        # ElementTree 파싱
+        from io import StringIO
+        tree = ET.parse(StringIO(xml_string))
+        
+        return tree, xml_string
+    except (KeyError, UnicodeDecodeError, ET.ParseError):
+        return None, None
 
 
 def _parse_container(container_xml: Optional[ET.ElementTree]) -> Tuple[Optional[str], List[str]]:

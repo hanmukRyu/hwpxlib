@@ -16,31 +16,25 @@ from text_extractor import extract_text
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 
 
-def modify_hwpx_text(
-    input_path: str, 
-    output_path: str, 
-    text_modifier: Callable[[str], str],
-    preserve_formatting: bool = True
-) -> None:
-    """HWPX 파일에서 텍스트를 읽고, 수정하고, 저장합니다.
+def modify_hwpx_text(input_path: str, output_path: str, modifier_func) -> None:
+    """HWPX 파일의 텍스트를 사용자 정의 함수로 수정합니다.
     
     Args:
         input_path: 입력 HWPX 파일 경로
         output_path: 출력 HWPX 파일 경로
-        text_modifier: 텍스트를 수정하는 함수 (str -> str)
-        preserve_formatting: 서식 보존 여부 (기본값: True)
+        modifier_func: 텍스트를 수정하는 함수 (str -> str)
     """
-    # 1. HWPX 파일 읽기
     hwpx = HWPXReader.read(input_path)
     
-    # 2. 텍스트 수정
-    if preserve_formatting:
-        _modify_text_preserve_formatting(hwpx, text_modifier)
-    else:
-        _modify_text_simple(hwpx, text_modifier)
+    # 각 section의 텍스트 수정
+    for name, tree in hwpx.content_files.items():
+        for elem in tree.iter():
+            if elem.text:
+                elem.text = modifier_func(elem.text)
+            if elem.tail:
+                elem.tail = modifier_func(elem.tail)
     
-    # 3. 수정된 파일 저장
-    _save_modified_hwpx(hwpx, output_path)
+    _save_modified_hwpx(hwpx, output_path, input_path)
 
 
 def replace_text_in_hwpx(
@@ -147,48 +141,89 @@ def _modify_text_simple(hwpx, text_modifier: Callable[[str], str]) -> None:
                         t_elem.text = ""
 
 
-def _save_modified_hwpx(hwpx, output_path: str) -> None:
-    """수정된 HWPX 파일을 저장합니다."""
-    # XML 트리들을 문자열로 변환
-    version_xml = ET.tostring(hwpx.version_xml.getroot(), encoding="unicode")
-    container_xml = ET.tostring(hwpx.container_xml.getroot(), encoding="unicode")
-    manifest_xml = ET.tostring(hwpx.manifest_xml.getroot(), encoding="unicode")
-    content_hpf = ET.tostring(hwpx.content_hpf.getroot(), encoding="unicode")
+def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> None:
+    """수정된 HWPX 파일을 저장합니다 (네임스페이스 보존)."""
     
-    # 모든 파일을 all_files에서 시작 (복사본 생성)
-    files = dict(hwpx.all_files)
+    # 호환성 개선 Writer 사용 (네임스페이스 보존 기능 포함)
+    if original_path:
+        try:
+            from compatible_writer import save_modified_hwpx_compatible
+            save_modified_hwpx_compatible(hwpx, output_path, original_path)
+            return
+        except ImportError:
+            pass
     
-    # 수정된 XML 파일들로 덮어쓰기 (바이너리로 저장)
-    files["version.xml"] = version_xml.encode("utf-8")
-    files["META-INF/container.xml"] = container_xml.encode("utf-8") 
-    files["META-INF/manifest.xml"] = manifest_xml.encode("utf-8")
-    files["Contents/content.hpf"] = content_hpf.encode("utf-8")
+    # 개선된 방식: 원본 XML 문자열 사용 (네임스페이스 보존)
+    # 수정되지 않은 XML들은 원본 문자열 사용, 수정된 것들만 새로 생성
+    version_xml = hwpx.original_xml_strings.get("version.xml", 
+        ET.tostring(hwpx.version_xml.getroot(), encoding="unicode", xml_declaration=True))
     
-    # 수정된 콘텐츠 파일들 덮어쓰기
-    for name, tree in hwpx.content_files.items():
-        files[name] = ET.tostring(tree.getroot(), encoding="utf-8")
+    container_xml = hwpx.original_xml_strings.get("META-INF/container.xml",
+        ET.tostring(hwpx.container_xml.getroot(), encoding="unicode", xml_declaration=True))
     
-    # HwpxWriter에는 핵심 XML만 전달하고, files에는 모든 파일 전달
-    # 중복을 피하기 위해 핵심 XML들을 files에서 제거
-    core_files = {
-        "version.xml": files.pop("version.xml", b""),
-        "META-INF/container.xml": files.pop("META-INF/container.xml", b""),
-        "META-INF/manifest.xml": files.pop("META-INF/manifest.xml", b""),
-        "Contents/content.hpf": files.pop("Contents/content.hpf", b""),
-        "mimetype": files.pop("mimetype", b"")
-    }
+    manifest_xml = hwpx.original_xml_strings.get("META-INF/manifest.xml",
+        ET.tostring(hwpx.manifest_xml.getroot(), encoding="unicode", xml_declaration=True))
     
-    # Writer로 저장
-    writer = HwpxWriter(
-        version_xml=version_xml,
-        container_xml=container_xml,
-        manifest_xml=manifest_xml,
-        content_hpf=content_hpf,
-        files=files,  # 핵심 파일들 제외한 나머지 파일들
-        mimetype=MIMETYPE,
-    )
+    content_hpf = hwpx.original_xml_strings.get("Contents/content.hpf",
+        ET.tostring(hwpx.content_hpf.getroot(), encoding="unicode", xml_declaration=True))
     
-    writer.write(output_path)
+    # HwpxWriter를 사용하지 않고 직접 ZIP 파일 생성 (네임스페이스 보존)
+    import zipfile
+    
+    # 원본 파일의 압축 설정 추출
+    compression_info = {}
+    if original_path:
+        try:
+            with zipfile.ZipFile(original_path, 'r') as orig_zf:
+                for info in orig_zf.infolist():
+                    compression_info[info.filename] = info.compress_type
+        except:
+            pass
+    
+    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # Store mimetype uncompressed as first entry.
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = zipfile.ZIP_STORED
+        zf.writestr(info, MIMETYPE)
+
+        # Core package files (원본 문자열 사용하고 원본 압축 설정 유지).
+        for filename, content in [
+            ("version.xml", version_xml),
+            ("META-INF/container.xml", container_xml),
+            ("META-INF/manifest.xml", manifest_xml),
+            ("Contents/content.hpf", content_hpf)
+        ]:
+            info = zipfile.ZipInfo(filename)
+            info.compress_type = compression_info.get(filename, zipfile.ZIP_DEFLATED)
+            zf.writestr(info, content.encode("utf-8"))
+
+        # 수정된 콘텐츠 파일들과 기타 파일들
+        processed_files = {
+            "mimetype", "version.xml", "META-INF/container.xml", 
+            "META-INF/manifest.xml", "Contents/content.hpf"
+        }
+        
+        # 수정된 콘텐츠 파일들 (section XML들)
+        for name, tree in hwpx.content_files.items():
+            # 원본 XML 문자열이 있으면 사용, 없으면 ElementTree에서 생성
+            if name in hwpx.original_xml_strings:
+                # TODO: 실제로 텍스트가 수정되었는지 확인하는 로직 필요
+                # 지금은 항상 새로 생성
+                xml_content = ET.tostring(tree.getroot(), encoding="utf-8")
+            else:
+                xml_content = ET.tostring(tree.getroot(), encoding="utf-8")
+            
+            info = zipfile.ZipInfo(name)
+            info.compress_type = compression_info.get(name, zipfile.ZIP_DEFLATED)
+            zf.writestr(info, xml_content)
+            processed_files.add(name)
+
+        # 나머지 파일들 (바이너리 파일들, 차트, 설정 등) - 원본 그대로
+        for filename, data in hwpx.all_files.items():
+            if filename not in processed_files:
+                info = zipfile.ZipInfo(filename)
+                info.compress_type = compression_info.get(filename, zipfile.ZIP_DEFLATED)
+                zf.writestr(info, data)
 
 
 # 편의 함수들
