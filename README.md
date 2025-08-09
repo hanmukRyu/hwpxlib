@@ -47,6 +47,29 @@ archive = HwpxArchive.read("input.hwpx")
 archive.write("output.hwpx")
 ```
 
+### Selective text replacement
+
+텍스트를 문장 단위로 교체하려면 `text_modifier` 모듈의 도우미 함수를 사용할 수 있습니다.
+
+```python
+from text_modifier import list_sentences, modify_selected_text
+
+# 문서에 포함된 문장을 인덱스와 함께 출력
+list_sentences("input.hwpx")
+
+# 예시 출력
+# 0: 첫 번째 문장입니다.
+# 1: 두 번째 문장입니다.
+
+# 특정 인덱스만 교체
+replacements = {
+    1: "두 번째 문장을 새로운 내용으로 교체합니다.",
+    # ("section0.xml", 5): lambda s: s.upper(),  # 파일 이름과 인덱스로 지정도 가능
+}
+
+modify_selected_text("input.hwpx", "output.hwpx", replacements)
+```
+
 ## Development notes
 
 - The helper functions `_modify_text_preserve_formatting` and `_modify_text_simple`
