@@ -47,6 +47,12 @@ archive = HwpxArchive.read("input.hwpx")
 archive.write("output.hwpx")
 ```
 
+## Development notes
+
+- The helper functions `_modify_text_preserve_formatting` and `_modify_text_simple`
+  were removed from `text_modifier.py`. Should future enhancements require them,
+  their implementations can be restored from the Git history.
+
 2025.05.23
 =========================================================================================
 * pull request #21 : TrackChageConfig에 configItemSet 객체 추가..
