@@ -1,7 +1,9 @@
 """HWPX 파일의 텍스트를 수정하는 유틸리티 함수들.
 
-이 모듈은 HWPX 파일에서 텍스트를 읽고, 수정하고, 저장하는 고수준 API를 제공합니다.
-reader와 text_extractor 모듈을 조합하여 사용합니다.
+이 모듈은 HWPX 파일에서 텍스트를 읽고 수정한 뒤 저장하는 고수준 API를 제공합니다.
+가능하다면 :mod:`compatible_writer` 의 저장 함수를 사용하고, 그렇지 않으면 ZIP 기반
+로직으로 직접 저장하여 네임스페이스를 보존합니다. `reader` 와
+`text_extractor` 모듈을 조합하여 사용합니다.
 """
 
 from typing import Callable, Dict, Any
@@ -150,7 +152,7 @@ def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> No
     # 한글 HWPX 네임스페이스 등록 (prefix 보존)
     _register_hwpx_namespaces()
     
-    # 호환성 개선 Writer 사용 (네임스페이스 보존 기능 포함)
+    # 가능하면 compatible_writer를 사용하여 네임스페이스를 보존하며 저장
     if original_path:
         try:
             from compatible_writer import save_modified_hwpx_compatible
@@ -173,7 +175,7 @@ def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> No
     content_hpf = hwpx.original_xml_strings.get("Contents/content.hpf",
         ET.tostring(hwpx.content_hpf.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
     
-    # HwpxWriter를 사용하지 않고 직접 ZIP 파일 생성 (네임스페이스 보존)
+    # 직접 ZIP 파일 생성 (네임스페이스 보존)
     import zipfile
     
     # 원본 파일의 압축 설정 추출
