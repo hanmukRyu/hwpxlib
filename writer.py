@@ -1,6 +1,9 @@
+import logging
 import zipfile
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 from xml.etree import ElementTree as ET
+
+from reader import MIMETYPE
 
 FileContent = Union[str, bytes]
 
@@ -73,3 +76,113 @@ class HwpxWriter:
                 if path in referenced:
                     continue
                 zf.writestr(path, self._encode(data))
+
+
+def _register_hwpx_namespaces() -> None:
+    """Register HWPX and common namespaces to preserve prefixes."""
+    ET.register_namespace('ha', 'http://www.hancom.co.kr/hwpml/2011/app')
+    ET.register_namespace('hp', 'http://www.hancom.co.kr/hwpml/2011/paragraph')
+    ET.register_namespace('hp10', 'http://www.hancom.co.kr/hwpml/2016/paragraph')
+    ET.register_namespace('hs', 'http://www.hancom.co.kr/hwpml/2011/section')
+    ET.register_namespace('hc', 'http://www.hancom.co.kr/hwpml/2011/core')
+    ET.register_namespace('hh', 'http://www.hancom.co.kr/hwpml/2011/head')
+    ET.register_namespace('hhs', 'http://www.hancom.co.kr/hwpml/2011/history')
+    ET.register_namespace('hm', 'http://www.hancom.co.kr/hwpml/2011/master-page')
+    ET.register_namespace('hpf', 'http://www.hancom.co.kr/schema/2011/hpf')
+    ET.register_namespace('hv', 'http://www.hancom.co.kr/hwpml/2011/version')
+    ET.register_namespace('hwpunitchar', 'http://www.hancom.co.kr/hwpml/2016/HwpUnitChar')
+    ET.register_namespace('ooxmlchart', 'http://www.hancom.co.kr/hwpml/2016/ooxmlchart')
+
+    ET.register_namespace('dc', 'http://purl.org/dc/elements/1.1/')
+    ET.register_namespace('config', 'urn:oasis:names:tc:opendocument:xmlns:config:1.0')
+    ET.register_namespace('epub', 'http://www.idpf.org/2007/ops')
+    ET.register_namespace('opf', 'http://www.idpf.org/2007/opf/')
+    ET.register_namespace('ocf', 'urn:oasis:names:tc:opendocument:xmlns:container')
+    ET.register_namespace('odf', 'urn:oasis:names:tc:opendocument:xmlns:manifest:1.0')
+
+
+def save_modified_hwpx(hwpx, output_path: str, original_path: Optional[str] = None,
+                       use_compatible: bool = True) -> None:
+    """Save a modified HWPX file while preserving namespaces and compression."""
+
+    _register_hwpx_namespaces()
+
+    if use_compatible and original_path:
+        try:
+            from compatible_writer import save_modified_hwpx_compatible
+            save_modified_hwpx_compatible(hwpx, output_path, original_path)
+            return
+        except ImportError:
+            logging.debug("compatible_writer not available; falling back to ZIP writer")
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning("compatible writer failed: %s", exc)
+
+    # Determine original XML strings or serialize trees
+    version_xml = hwpx.original_xml_strings.get(
+        "version.xml",
+        ET.tostring(hwpx.version_xml.getroot(), encoding="utf-8", xml_declaration=True).decode("utf-8"),
+    )
+    container_xml = hwpx.original_xml_strings.get(
+        "META-INF/container.xml",
+        ET.tostring(hwpx.container_xml.getroot(), encoding="utf-8", xml_declaration=True).decode("utf-8"),
+    )
+    manifest_xml = hwpx.original_xml_strings.get(
+        "META-INF/manifest.xml",
+        ET.tostring(hwpx.manifest_xml.getroot(), encoding="utf-8", xml_declaration=True).decode("utf-8"),
+    )
+    content_hpf = hwpx.original_xml_strings.get(
+        "Contents/content.hpf",
+        ET.tostring(hwpx.content_hpf.getroot(), encoding="utf-8", xml_declaration=True).decode("utf-8"),
+    )
+
+    compression_info: Dict[str, int] = {}
+    if original_path:
+        try:
+            with zipfile.ZipFile(original_path, 'r') as orig_zf:
+                for info in orig_zf.infolist():
+                    compression_info[info.filename] = info.compress_type
+        except Exception as exc:  # pragma: no cover - defensive
+            logging.warning("Error reading compression info: %s", exc)
+
+    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        info = zipfile.ZipInfo("mimetype")
+        info.compress_type = zipfile.ZIP_STORED
+        zf.writestr(info, MIMETYPE)
+
+        for filename, content in [
+            ("version.xml", version_xml),
+            ("META-INF/container.xml", container_xml),
+            ("META-INF/manifest.xml", manifest_xml),
+            ("Contents/content.hpf", content_hpf),
+        ]:
+            info = zipfile.ZipInfo(filename)
+            info.compress_type = compression_info.get(filename, zipfile.ZIP_DEFLATED)
+            zf.writestr(info, content.encode("utf-8"))
+
+        processed = {
+            "mimetype",
+            "version.xml",
+            "META-INF/container.xml",
+            "META-INF/manifest.xml",
+            "Contents/content.hpf",
+        }
+
+        for name, tree in hwpx.content_files.items():
+            if hasattr(hwpx, 'modified_files') and name in getattr(hwpx, 'modified_files', set()):
+                xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+            elif name in hwpx.original_xml_strings:
+                xml_content = hwpx.original_xml_strings[name].encode("utf-8")
+            else:
+                xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+
+            info = zipfile.ZipInfo(name)
+            info.compress_type = compression_info.get(name, zipfile.ZIP_DEFLATED)
+            zf.writestr(info, xml_content)
+            processed.add(name)
+
+        for filename, data in hwpx.all_files.items():
+            if filename not in processed:
+                info = zipfile.ZipInfo(filename)
+                info.compress_type = compression_info.get(filename, zipfile.ZIP_DEFLATED)
+                zf.writestr(info, data)
+

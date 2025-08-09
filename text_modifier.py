@@ -7,43 +7,17 @@
 """
 
 from typing import Callable, Dict, Any
-import xml.etree.ElementTree as ET
 import re
-import logging
 
-from reader import HWPXReader, MIMETYPE
+from reader import HWPXReader
 from text_extractor import extract_text
+from writer import save_modified_hwpx
 
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 
 # Note: helper functions `_modify_text_preserve_formatting` and
 # `_modify_text_simple` were removed. If future features require them,
 # they can be restored from the Git history.
-
-
-def _register_hwpx_namespaces():
-    """HWPX 파일에서 사용되는 네임스페이스들을 등록하여 prefix를 보존합니다."""
-    # 한글 HWPX 네임스페이스들
-    ET.register_namespace('ha', 'http://www.hancom.co.kr/hwpml/2011/app')
-    ET.register_namespace('hp', 'http://www.hancom.co.kr/hwpml/2011/paragraph')
-    ET.register_namespace('hp10', 'http://www.hancom.co.kr/hwpml/2016/paragraph')
-    ET.register_namespace('hs', 'http://www.hancom.co.kr/hwpml/2011/section')
-    ET.register_namespace('hc', 'http://www.hancom.co.kr/hwpml/2011/core')
-    ET.register_namespace('hh', 'http://www.hancom.co.kr/hwpml/2011/head')
-    ET.register_namespace('hhs', 'http://www.hancom.co.kr/hwpml/2011/history')
-    ET.register_namespace('hm', 'http://www.hancom.co.kr/hwpml/2011/master-page')
-    ET.register_namespace('hpf', 'http://www.hancom.co.kr/schema/2011/hpf')
-    ET.register_namespace('hv', 'http://www.hancom.co.kr/hwpml/2011/version')
-    ET.register_namespace('hwpunitchar', 'http://www.hancom.co.kr/hwpml/2016/HwpUnitChar')
-    ET.register_namespace('ooxmlchart', 'http://www.hancom.co.kr/hwpml/2016/ooxmlchart')
-    
-    # 표준 네임스페이스들
-    ET.register_namespace('dc', 'http://purl.org/dc/elements/1.1/')
-    ET.register_namespace('config', 'urn:oasis:names:tc:opendocument:xmlns:config:1.0')
-    ET.register_namespace('epub', 'http://www.idpf.org/2007/ops')
-    ET.register_namespace('opf', 'http://www.idpf.org/2007/opf/')
-    ET.register_namespace('ocf', 'urn:oasis:names:tc:opendocument:xmlns:container')
-    ET.register_namespace('odf', 'urn:oasis:names:tc:opendocument:xmlns:manifest:1.0')
 
 
 def modify_hwpx_text(input_path: str, output_path: str, modifier_func) -> None:
@@ -147,94 +121,9 @@ def get_hwpx_text_stats(file_path: str) -> Dict[str, Any]:
 
 
 def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> None:
-    """수정된 HWPX 파일을 저장합니다 (네임스페이스 보존)."""
-    
-    # 한글 HWPX 네임스페이스 등록 (prefix 보존)
-    _register_hwpx_namespaces()
-    
-    # 가능하면 compatible_writer를 사용하여 네임스페이스를 보존하며 저장
-    if original_path:
-        try:
-            from compatible_writer import save_modified_hwpx_compatible
-            save_modified_hwpx_compatible(hwpx, output_path, original_path)
-            return
-        except ImportError:
-            pass
-    
-    # 개선된 방식: 원본 XML 문자열 사용 (네임스페이스 보존)
-    # 수정되지 않은 XML들은 원본 문자열 사용, 수정된 것들만 새로 생성
-    version_xml = hwpx.original_xml_strings.get("version.xml", 
-        ET.tostring(hwpx.version_xml.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
-    
-    container_xml = hwpx.original_xml_strings.get("META-INF/container.xml",
-        ET.tostring(hwpx.container_xml.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
-    
-    manifest_xml = hwpx.original_xml_strings.get("META-INF/manifest.xml",
-        ET.tostring(hwpx.manifest_xml.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
-    
-    content_hpf = hwpx.original_xml_strings.get("Contents/content.hpf",
-        ET.tostring(hwpx.content_hpf.getroot(), encoding="utf-8", xml_declaration=True).decode('utf-8'))
-    
-    # 직접 ZIP 파일 생성 (네임스페이스 보존)
-    import zipfile
-    
-    # 원본 파일의 압축 설정 추출
-    compression_info = {}
-    if original_path:
-        try:
-            with zipfile.ZipFile(original_path, 'r') as orig_zf:
-                for info in orig_zf.infolist():
-                    compression_info[info.filename] = info.compress_type
-        except Exception as e:
-            logging.warning("원본 HWPX 압축 정보를 읽는 중 오류 발생: %s", e)
-    
-    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # Store mimetype uncompressed as first entry.
-        info = zipfile.ZipInfo("mimetype")
-        info.compress_type = zipfile.ZIP_STORED
-        zf.writestr(info, MIMETYPE)
+    """수정된 HWPX 파일을 저장합니다."""
 
-        # Core package files (원본 문자열 사용하고 원본 압축 설정 유지).
-        for filename, content in [
-            ("version.xml", version_xml),
-            ("META-INF/container.xml", container_xml),
-            ("META-INF/manifest.xml", manifest_xml),
-            ("Contents/content.hpf", content_hpf)
-        ]:
-            info = zipfile.ZipInfo(filename)
-            info.compress_type = compression_info.get(filename, zipfile.ZIP_DEFLATED)
-            zf.writestr(info, content.encode("utf-8"))
-
-        # 수정된 콘텐츠 파일들과 기타 파일들
-        processed_files = {
-            "mimetype", "version.xml", "META-INF/container.xml", 
-            "META-INF/manifest.xml", "Contents/content.hpf"
-        }
-        
-        # 수정된 콘텐츠 파일들 (section XML들)
-        for name, tree in hwpx.content_files.items():
-            # 수정된 파일인지 확인
-            if hasattr(hwpx, 'modified_files') and name in hwpx.modified_files:
-                # 수정된 파일은 새로 직렬화 (네임스페이스 prefix 보존)
-                xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
-            elif name in hwpx.original_xml_strings:
-                # 수정되지 않은 파일은 원본 문자열 사용
-                xml_content = hwpx.original_xml_strings[name].encode('utf-8')
-            else:
-                # 원본 문자열이 없으면 새로 직렬화
-                xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
-            
-            info = zipfile.ZipInfo(name)
-            info.compress_type = compression_info.get(name, zipfile.ZIP_DEFLATED)
-            zf.writestr(info, xml_content)
-            processed_files.add(name)
-
-        # 나머지 파일들 (바이너리 파일들, 차트, 설정 등) - 원본 그대로
-        for filename, data in hwpx.all_files.items():
-            if filename not in processed_files:
-                info = zipfile.ZipInfo(filename)
-                info.compress_type = compression_info.get(filename, zipfile.ZIP_DEFLATED)
-                zf.writestr(info, data)
+    save_modified_hwpx(hwpx, output_path, original_path)
 
 
 # 편의 함수들
