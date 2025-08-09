@@ -13,6 +13,10 @@ from text_extractor import extract_text
 
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 
+# Note: helper functions `_modify_text_preserve_formatting` and
+# `_modify_text_simple` were removed. If future features require them,
+# they can be restored from the Git history.
+
 
 def _register_hwpx_namespaces():
     """HWPX 파일에서 사용되는 네임스페이스들을 등록하여 prefix를 보존합니다."""
@@ -137,48 +141,6 @@ def get_hwpx_text_stats(file_path: str) -> Dict[str, Any]:
         "total_lines": text.count("\n") + 1 if text else 0,
         "total_paragraphs": len([p for p in text.split("\n\n") if p.strip()]),
     }
-
-
-def _modify_text_preserve_formatting(hwpx, text_modifier: Callable[[str], str]) -> None:
-    """서식을 보존하면서 텍스트를 수정합니다."""
-    for file_path, tree in hwpx.content_files.items():
-        if file_path.startswith("Contents/section") and file_path.endswith(".xml"):
-            root = tree.getroot()
-            
-            # 모든 텍스트 요소 찾기 및 수정
-            for t_elem in root.iter(HP_NAMESPACE + "t"):
-                if t_elem.text:
-                    original_text = t_elem.text
-                    modified_text = text_modifier(original_text)
-                    t_elem.text = modified_text
-
-
-def _modify_text_simple(hwpx, text_modifier: Callable[[str], str]) -> None:
-    """간단한 텍스트 수정 (전체 텍스트를 한번에 처리)"""
-    # 전체 텍스트 추출
-    all_text = ""
-    for file_path, tree in hwpx.content_files.items():
-        if file_path.startswith("Contents/section") and file_path.endswith(".xml"):
-            root = tree.getroot()
-            for t_elem in root.iter(HP_NAMESPACE + "t"):
-                if t_elem.text:
-                    all_text += t_elem.text
-    
-    # 텍스트 수정
-    modified_text = text_modifier(all_text)
-    
-    # 첫 번째 텍스트 요소에만 수정된 텍스트 배치, 나머지는 제거
-    first_found = False
-    for file_path, tree in hwpx.content_files.items():
-        if file_path.startswith("Contents/section") and file_path.endswith(".xml"):
-            root = tree.getroot()
-            for t_elem in root.iter(HP_NAMESPACE + "t"):
-                if t_elem.text:
-                    if not first_found:
-                        t_elem.text = modified_text
-                        first_found = True
-                    else:
-                        t_elem.text = ""
 
 
 def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> None:
