@@ -7,6 +7,7 @@ reader와 text_extractor 모듈을 조합하여 사용합니다.
 from typing import Callable, Dict, Any
 import xml.etree.ElementTree as ET
 import re
+import logging
 
 from reader import HWPXReader, MIMETYPE
 from text_extractor import extract_text
@@ -182,8 +183,8 @@ def _save_modified_hwpx(hwpx, output_path: str, original_path: str = None) -> No
             with zipfile.ZipFile(original_path, 'r') as orig_zf:
                 for info in orig_zf.infolist():
                     compression_info[info.filename] = info.compress_type
-        except:
-            pass
+        except Exception as e:
+            logging.warning("원본 HWPX 압축 정보를 읽는 중 오류 발생: %s", e)
     
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         # Store mimetype uncompressed as first entry.
