@@ -74,8 +74,21 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
     segments = []
     for idx, file_name, elem, attr, text in enumerate_text_nodes(hwpx):
         parent_map = parent_maps[file_name]
-        run = parent_map.get(elem)
-        paragraph = parent_map.get(run) if run is not None else None
+
+        # Ascend the tree to find the surrounding <hp:r> and <hp:p> elements.
+        parent = parent_map.get(elem)
+        run = None
+        paragraph = None
+        while parent is not None and paragraph is None:
+            tag = parent.tag
+            if tag == HP_NAMESPACE + "r" and run is None:
+                run = parent
+            if tag == HP_NAMESPACE + "p":
+                paragraph = parent
+                break
+            parent = parent_map.get(parent)
+
+        phrase_id = paragraph.get("id") if paragraph is not None else None
 
         format_info = {"elem": dict(elem.attrib)}
 
@@ -99,6 +112,7 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
                 "file": file_name,
                 "attr": attr,
                 "text": text,
+                "phrase_id": phrase_id,
                 "format": format_info,
             }
         )
