@@ -7,6 +7,7 @@
 """
 
 from typing import Callable, Dict, Any
+import json
 import re
 
 from reader import HWPXReader
@@ -18,6 +19,92 @@ HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 # Note: helper functions `_modify_text_preserve_formatting` and
 # `_modify_text_simple` were removed. If future features require them,
 # they can be restored from the Git history.
+
+
+def enumerate_text_nodes(hwpx):
+    """Yield all text nodes in ``hwpx`` along with their location information.
+
+    Each yielded item is ``(index, file_name, element, attr, text)`` where
+    ``attr`` is either ``"text"`` or ``"tail"`` indicating whether the string
+    originated from ``elem.text`` or ``elem.tail``.
+    """
+
+    index = 0
+    for file_name, tree in hwpx.content_files.items():
+        for elem in tree.iter():
+            if elem.text:
+                yield index, file_name, elem, "text", elem.text
+                index += 1
+            if elem.tail:
+                yield index, file_name, elem, "tail", elem.tail
+                index += 1
+
+
+def export_text_segments(hwpx_path: str, json_path: str) -> None:
+    """Export text segments and their formatting information to ``json_path``.
+
+    Parameters
+    ----------
+    hwpx_path:
+        Path to the input ``.hwpx`` file.
+    json_path:
+        Path where the JSON array describing each segment will be written.
+    """
+
+    hwpx = HWPXReader.read(hwpx_path)
+
+    # Build parent maps for quick lookup of run/paragraph elements.
+    parent_maps = {
+        name: {child: parent for parent in tree.iter() for child in parent}
+        for name, tree in hwpx.content_files.items()
+    }
+
+    def _element_to_dict(elem):
+        data = dict(elem.attrib)
+        for child in elem:
+            tag = child.tag.split('}', 1)[-1]
+            if child.attrib:
+                data[tag] = dict(child.attrib)
+            elif child.text and child.text.strip():
+                data[tag] = child.text
+            else:
+                data[tag] = {}
+        return data
+
+    segments = []
+    for idx, file_name, elem, attr, text in enumerate_text_nodes(hwpx):
+        parent_map = parent_maps[file_name]
+        run = parent_map.get(elem)
+        paragraph = parent_map.get(run) if run is not None else None
+
+        format_info = {"elem": dict(elem.attrib)}
+
+        if run is not None:
+            run_fmt = dict(run.attrib)
+            rpr = run.find(HP_NAMESPACE + "rPr")
+            if rpr is not None:
+                run_fmt["rPr"] = _element_to_dict(rpr)
+            format_info["run"] = run_fmt
+
+        if paragraph is not None:
+            para_fmt = dict(paragraph.attrib)
+            ppr = paragraph.find(HP_NAMESPACE + "pPr")
+            if ppr is not None:
+                para_fmt["pPr"] = _element_to_dict(ppr)
+            format_info["paragraph"] = para_fmt
+
+        segments.append(
+            {
+                "index": idx,
+                "file": file_name,
+                "attr": attr,
+                "text": text,
+                "format": format_info,
+            }
+        )
+
+    with open(json_path, "w", encoding="utf-8") as fp:
+        json.dump(segments, fp, ensure_ascii=False, indent=2)
 
 
 def modify_hwpx_text(input_path: str, output_path: str, modifier_func) -> None:
@@ -154,6 +241,7 @@ if __name__ == "__main__":
         print("  python text_modifier.py upper <input.hwpx> <output.hwpx>")
         print("  python text_modifier.py lower <input.hwpx> <output.hwpx>")
         print("  python text_modifier.py stats <input.hwpx>")
+        print("  python text_modifier.py export <input.hwpx> <segments.json>")
     else:
         command = sys.argv[1]
         input_file = sys.argv[2]
@@ -163,23 +251,27 @@ if __name__ == "__main__":
             print("HWPX 파일 텍스트 통계:")
             for key, value in stats.items():
                 print(f"  {key}: {value:,}")
-        
+        elif command == "export" and len(sys.argv) >= 4:
+            json_file = sys.argv[3]
+            export_text_segments(input_file, json_file)
+            print(f"텍스트 세그먼트를 {json_file} 파일로 내보냈습니다.")
+
         elif len(sys.argv) >= 4:
             output_file = sys.argv[3]
-            
+
             if command == "replace" and len(sys.argv) >= 6:
                 search_text = sys.argv[4]
                 replace_text = sys.argv[5]
                 count = replace_text_in_hwpx(input_file, output_file, search_text, replace_text)
                 print(f"텍스트 교체 완료: {count}개 교체됨")
-            
+
             elif command == "upper":
                 uppercase_hwpx_text(input_file, output_file)
                 print("대문자 변환 완료")
-            
+
             elif command == "lower":
                 lowercase_hwpx_text(input_file, output_file)
                 print("소문자 변환 완료")
-            
+
             else:
                 print("알 수 없는 명령어입니다.")
