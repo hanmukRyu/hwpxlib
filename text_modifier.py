@@ -1,16 +1,14 @@
-"""HWPX 파일의 텍스트를 수정하는 유틸리티 함수들
+"""HWPX 파일의 텍스트를 수정하는 유틸리티 함수들.
 
 이 모듈은 HWPX 파일에서 텍스트를 읽고, 수정하고, 저장하는 고수준 API를 제공합니다.
-기존의 reader, writer, text_extractor 모듈들을 조합하여 사용합니다.
+reader와 text_extractor 모듈을 조합하여 사용합니다.
 """
 
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Dict, Any
 import xml.etree.ElementTree as ET
-from xml.etree import ElementTree
 import re
 
 from reader import HWPXReader, MIMETYPE
-from writer import HwpxWriter
 from text_extractor import extract_text
 
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
