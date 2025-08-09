@@ -54,12 +54,14 @@ archive.write("output.hwpx")
 ```python
 from text_modifier import list_sentences, modify_selected_text
 
-# 문서에 포함된 문장을 인덱스와 함께 출력
-list_sentences("input.hwpx")
+# 문장 목록을 JSON으로 확인 (phrase_id 포함)
+list_sentences("input.hwpx", as_json=True)
 
 # 예시 출력
-# 0: 첫 번째 문장입니다.
-# 1: 두 번째 문장입니다.
+# [
+#   {"index": 0, "phrase_id": "2764991984", "text": "첫 번째 문장입니다."},
+#   {"index": 1, "phrase_id": "2764991984", "text": "두 번째 문장입니다."}
+# ]
 
 # 특정 인덱스만 교체
 replacements = {

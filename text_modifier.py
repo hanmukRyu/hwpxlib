@@ -13,7 +13,7 @@
 
     from text_modifier import list_sentences, modify_selected_text
 
-    list_sentences("input.hwpx")  # 각 문장의 인덱스를 확인
+    list_sentences("input.hwpx", as_json=True)  # 문장 목록을 JSON으로 확인
 
     replacements = {
         3: "세 번째 문장을 새로 작성합니다.",
@@ -21,7 +21,7 @@
     modify_selected_text("input.hwpx", "output.hwpx", replacements)
 """
 
-from typing import Callable, Dict, Any, Iterable, Tuple, Union
+from typing import Callable, Dict, Any, Iterable, Tuple, Union, Optional
 import re
 
 from reader import HWPXReader
@@ -31,7 +31,7 @@ from writer import save_modified_hwpx
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 
 
-def enumerate_text_nodes(hwpx) -> Iterable[Tuple[int, str, Any, str, str]]:
+def enumerate_text_nodes(hwpx) -> Iterable[Tuple[int, str, Any, str, str, Optional[str]]]:
     """Yield all text nodes from ``hwpx`` in reading order.
 
     Parameters
@@ -41,20 +41,30 @@ def enumerate_text_nodes(hwpx) -> Iterable[Tuple[int, str, Any, str, str]]:
 
     Yields
     ------
-    ``(index, file_name, element, attr_name, text)`` 튜플
+    ``(index, file_name, element, attr_name, text, phrase_id)`` 튜플
         ``element`` 는 :mod:`xml.etree.ElementTree` 의 요소이며, ``attr_name`` 은
-        ``"text"`` 또는 ``"tail"`` 이다. ``index`` 는 문서 전반에서의 순번이다.
+        ``"text"`` 또는 ``"tail"`` 이다. ``index`` 는 문서 전반에서의 순번이며
+        ``phrase_id`` 는 상위 ``hp:p`` 요소의 ``id`` 속성 값이다.
     """
 
     idx = 0
+
+    def walk(elem, file_name: str, current_pid: Optional[str]):
+        nonlocal idx
+        if elem.tag == HP_NAMESPACE + "p":
+            current_pid = elem.attrib.get("id")
+        if elem.text is not None:
+            yield idx, file_name, elem, "text", elem.text, current_pid
+            idx += 1
+        for child in list(elem):
+            yield from walk(child, file_name, current_pid)
+        if elem.tail is not None:
+            yield idx, file_name, elem, "tail", elem.tail, current_pid
+            idx += 1
+
     for file_name, tree in hwpx.content_files.items():
-        for elem in tree.iter():
-            if elem.text is not None:
-                yield idx, file_name, elem, "text", elem.text
-                idx += 1
-            if elem.tail is not None:
-                yield idx, file_name, elem, "tail", elem.tail
-                idx += 1
+        root = tree.getroot()
+        yield from walk(root, file_name, None)
 
 # Note: helper functions `_modify_text_preserve_formatting` and
 # `_modify_text_simple` were removed. If future features require them,
@@ -123,7 +133,7 @@ def modify_selected_text(
 
     modified_count = 0
 
-    for idx, file_name, elem, attr, text in enumerate_text_nodes(hwpx):
+    for idx, file_name, elem, attr, text, _pid in enumerate_text_nodes(hwpx):
         key = (file_name, idx)
         repl = None
         if key in replacements:
@@ -230,12 +240,27 @@ def remove_extra_spaces(input_path: str, output_path: str) -> None:
     modify_hwpx_text(input_path, output_path, space_reducer)
 
 
-def list_sentences(file_path: str) -> None:
-    """문서의 모든 문장을 인덱스와 함께 출력합니다."""
+def list_sentences(file_path: str, as_json: bool = False) -> None:
+    """문서의 모든 문장을 인덱스와 함께 출력하거나 JSON으로 내보냅니다."""
 
     hwpx = HWPXReader.read(file_path)
-    for idx, _file, _elem, _attr, text in enumerate_text_nodes(hwpx):
-        print(f"{idx}: {text}")
+    entries = [
+        {
+            "index": idx,
+            "file_name": _file,
+            "text": text,
+            "phrase_id": pid,
+        }
+        for idx, _file, _elem, _attr, text, pid in enumerate_text_nodes(hwpx)
+    ]
+
+    if as_json:
+        import json
+
+        print(json.dumps(entries, ensure_ascii=False, indent=2))
+    else:
+        for item in entries:
+            print(f"{item['index']}: {item['text']}")
 
 
 if __name__ == "__main__":
@@ -243,7 +268,7 @@ if __name__ == "__main__":
 
     if len(sys.argv) < 2:
         print("Usage:")
-        print("  python text_modifier.py list <input.hwpx>")
+        print("  python text_modifier.py list <input.hwpx> [--json]")
         print("  python text_modifier.py stats <input.hwpx>")
         print("  python text_modifier.py replace <input.hwpx> <output.hwpx> <search> <replace>")
         print("  python text_modifier.py upper <input.hwpx> <output.hwpx>")
@@ -252,7 +277,8 @@ if __name__ == "__main__":
         command = sys.argv[1]
 
         if command == "list" and len(sys.argv) >= 3:
-            list_sentences(sys.argv[2])
+            as_json = len(sys.argv) >= 4 and sys.argv[3] == "--json"
+            list_sentences(sys.argv[2], as_json=as_json)
 
         elif command == "stats" and len(sys.argv) >= 3:
             input_file = sys.argv[2]
