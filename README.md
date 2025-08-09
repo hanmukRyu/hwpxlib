@@ -47,6 +47,33 @@ archive = HwpxArchive.read("input.hwpx")
 archive.write("output.hwpx")
 ```
 
+## Exporting and applying text segments
+
+`text_modifier.export_text_segments` can serialize every text run in a
+`*.hwpx` file into a JSON array. Each element describes a single run and
+includes a `phrase_id` field capturing the `id` of the surrounding
+`<hp:p>` element. Runs originating from the same paragraph therefore share
+the same `phrase_id`, allowing consumers to group them into phrases.
+
+```json
+[
+  {
+    "index": 0,
+    "file": "Contents/section0.xml",
+    "attr": "text",
+    "text": "Hello",
+    "phrase_id": "0",
+    "format": {
+      "elem": {}
+    }
+  }
+]
+```
+
+The companion `apply_segments` function ignores unrecognized keys like
+`phrase_id`. This means the JSON above can be modified (e.g., adjust the
+`text` field) and written back without removing the additional metadata.
+
 ## Development notes
 
 - The helper functions `_modify_text_preserve_formatting` and `_modify_text_simple`

@@ -23,3 +23,4 @@ def test_apply_segments(tmp_path):
         seg for seg in updated_segments if seg["file"] == target["file"] and seg["index"] == target["index"]
     )
     assert updated["text"] == "MODIFIED TEXT"
+    assert updated["phrase_id"] == target["phrase_id"]
