@@ -107,6 +107,53 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
         json.dump(segments, fp, ensure_ascii=False, indent=2)
 
 
+def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> None:
+    """Apply text segments from ``segments_json`` to ``input_hwpx``.
+
+    Parameters
+    ----------
+    input_hwpx:
+        Path to the source ``.hwpx`` file.
+    segments_json:
+        JSON file produced by :func:`export_text_segments` describing
+        replacements.  Each item must provide ``file``, ``index`` and
+        ``text``.
+    output_hwpx:
+        Path where the modified HWPX will be written.
+    """
+
+    hwpx = HWPXReader.read(input_hwpx)
+
+    if not hasattr(hwpx, "modified_files"):
+        hwpx.modified_files = set()
+
+    with open(segments_json, "r", encoding="utf-8") as fp:
+        segments = json.load(fp)
+
+    # Build a lookup of all text nodes keyed by (file, index).
+    lookup = {
+        (file_name, idx): (elem, attr)
+        for idx, file_name, elem, attr, _ in enumerate_text_nodes(hwpx)
+    }
+
+    for seg in segments:
+        key = (seg.get("file"), seg.get("index"))
+        if key not in lookup:
+            continue
+        elem, attr = lookup[key]
+        new_text = seg.get("text", "")
+        if attr == "text":
+            if elem.text != new_text:
+                elem.text = new_text
+                hwpx.modified_files.add(seg["file"])
+        else:
+            if elem.tail != new_text:
+                elem.tail = new_text
+                hwpx.modified_files.add(seg["file"])
+
+    _save_modified_hwpx(hwpx, output_hwpx, input_hwpx)
+
+
 def modify_hwpx_text(input_path: str, output_path: str, modifier_func) -> None:
     """HWPX 파일의 텍스트를 사용자 정의 함수로 수정합니다.
     
@@ -242,10 +289,11 @@ if __name__ == "__main__":
         print("  python text_modifier.py lower <input.hwpx> <output.hwpx>")
         print("  python text_modifier.py stats <input.hwpx>")
         print("  python text_modifier.py export <input.hwpx> <segments.json>")
+        print("  python text_modifier.py apply <input.hwpx> <segments.json> <output.hwpx>")
     else:
         command = sys.argv[1]
         input_file = sys.argv[2]
-        
+
         if command == "stats":
             stats = get_hwpx_text_stats(input_file)
             print("HWPX 파일 텍스트 통계:")
@@ -255,6 +303,12 @@ if __name__ == "__main__":
             json_file = sys.argv[3]
             export_text_segments(input_file, json_file)
             print(f"텍스트 세그먼트를 {json_file} 파일로 내보냈습니다.")
+
+        elif command == "apply" and len(sys.argv) >= 5:
+            segments_file = sys.argv[3]
+            output_file = sys.argv[4]
+            apply_segments(input_file, segments_file, output_file)
+            print(f"세그먼트를 적용하여 {output_file} 파일로 저장했습니다.")
 
         elif len(sys.argv) >= 4:
             output_file = sys.argv[3]
