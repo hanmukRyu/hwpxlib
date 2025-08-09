@@ -30,7 +30,9 @@ def enumerate_text_nodes(hwpx):
     """
 
     index = 0
-    for file_name, tree in hwpx.content_files.items():
+    # Sort files by name to ensure consistent ordering
+    for file_name in sorted(hwpx.content_files.keys()):
+        tree = hwpx.content_files[file_name]
         for elem in tree.iter():
             if elem.text:
                 yield index, file_name, elem, "text", elem.text
@@ -58,6 +60,16 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
         name: {child: parent for parent in tree.iter() for child in parent}
         for name, tree in hwpx.content_files.items()
     }
+
+    # Build paragraph to phrase_id mapping (0-based sequential numbering)
+    paragraph_to_phrase_id = {}
+    phrase_id_counter = 0
+    
+    for file_name, tree in hwpx.content_files.items():
+        for paragraph in tree.iter(HP_NAMESPACE + "p"):
+            if paragraph not in paragraph_to_phrase_id:
+                paragraph_to_phrase_id[paragraph] = phrase_id_counter
+                phrase_id_counter += 1
 
     def _element_to_dict(elem):
         data = dict(elem.attrib)
@@ -88,7 +100,7 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
                 break
             parent = parent_map.get(parent)
 
-        phrase_id = paragraph.get("id") if paragraph is not None else None
+        phrase_id = paragraph_to_phrase_id.get(paragraph) if paragraph is not None else None
 
         format_info = {"elem": dict(elem.attrib)}
 
