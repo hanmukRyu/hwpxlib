@@ -167,7 +167,7 @@ def save_modified_hwpx(hwpx, output_path: str, original_path: Optional[str] = No
             "Contents/content.hpf",
         }
 
-        for name, tree in hwpx.content_files.items():
+        for name, tree in hwpx.content_files.items():            
             if hasattr(hwpx, 'modified_files') and name in getattr(hwpx, 'modified_files', set()):
                 xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
             elif name in hwpx.original_xml_strings:

@@ -9,6 +9,7 @@
 from typing import Callable, Dict, Any
 import json
 import re
+import os
 
 from reader import HWPXReader
 from text_extractor import extract_text
@@ -149,7 +150,6 @@ def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> Non
     """
 
     hwpx = HWPXReader.read(input_hwpx)
-
     if not hasattr(hwpx, "modified_files"):
         hwpx.modified_files = set()
 
@@ -162,20 +162,51 @@ def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> Non
         for idx, file_name, elem, attr, _ in enumerate_text_nodes(hwpx)
     }
 
+    # delete 액션을 먼저 수집하여 나중에 처리 (인덱스 변경 방지)
+    delete_elements = []
+    
     for seg in segments:
         key = (seg.get("file"), seg.get("index"))
         if key not in lookup:
             continue
         elem, attr = lookup[key]
-        new_text = seg.get("text", "")
-        if attr == "text":
-            if elem.text != new_text:
-                elem.text = new_text
-                hwpx.modified_files.add(seg["file"])
+        
+        # action 필드 확인 (기본값은 "edit")
+        action = seg.get("action", "edit")
+        
+        if action == "delete":
+            # delete 액션: 나중에 일괄 처리하기 위해 수집
+            delete_elements.append((seg, elem, attr))
         else:
-            if elem.tail != new_text:
-                elem.tail = new_text
+            # edit 또는 insert 액션: 텍스트 수정
+            new_text = seg.get("text", "")
+            if attr == "text":
+                if elem.text != new_text:
+                    elem.text = new_text
+                    hwpx.modified_files.add(seg["file"])
+            else:
+                if elem.tail != new_text:
+                    elem.tail = new_text
+                    hwpx.modified_files.add(seg["file"])
+    
+    # delete 액션 일괄 처리
+    for seg, elem, attr in delete_elements:
+        try:
+            # 부모 Element 찾기
+            file_tree = hwpx.content_files[seg["file"]]
+            parent = None
+            for parent_candidate in file_tree.iter():
+                if elem in parent_candidate:
+                    parent = parent_candidate
+                    break
+            
+            if parent is not None:
+                parent.remove(elem)
                 hwpx.modified_files.add(seg["file"])
+            else:
+                print(f"Warning: Could not find parent for element at index {seg['index']} in {seg['file']}")
+        except Exception as e:
+            print(f"Error deleting element at index {seg['index']}: {e}")
 
     _save_modified_hwpx(hwpx, output_hwpx, input_hwpx)
 
