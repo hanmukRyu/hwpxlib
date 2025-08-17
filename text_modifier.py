@@ -92,38 +92,96 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
         parent = parent_map.get(elem)
         run = None
         paragraph = None
-        while parent is not None and paragraph is None:
-            tag = parent.tag
+        charPrIDRef = None
+        
+        # First, check if charPrIDRef is in the element itself
+        if "charPrIDRef" in elem.attrib:
+            charPrIDRef = elem.attrib["charPrIDRef"]
+        
+        # Traverse up the tree to find run, paragraph, and charPrIDRef
+        current = parent
+        while current is not None:
+            tag = current.tag
+            
+            # Look for charPrIDRef in any ancestor if not found yet
+            if charPrIDRef is None and "charPrIDRef" in current.attrib:
+                charPrIDRef = current.attrib["charPrIDRef"]
+            
+            # Find the run element
             if tag == HP_NAMESPACE + "r" and run is None:
-                run = parent
+                run = current
+                # Check for charPrIDRef in run if not found yet
+                if charPrIDRef is None and "charPrIDRef" in current.attrib:
+                    charPrIDRef = current.attrib["charPrIDRef"]
+            
+            # Find the paragraph element
             if tag == HP_NAMESPACE + "p":
-                paragraph = parent
+                paragraph = current
                 break
-            parent = parent_map.get(parent)
+                
+            current = parent_map.get(current)
 
         phrase_id = paragraph_to_phrase_id.get(paragraph) if paragraph is not None else None
 
+        # Check if this is an image element (hp:pic)
+        is_image = False
+        current_elem = elem
+        while current_elem is not None:
+            if current_elem.tag == HP_NAMESPACE + "pic":
+                is_image = True
+                break
+            current_elem = parent_map.get(current_elem)
+
+        # Check if this is within a header element (hp:header)
+        is_header = False
+        current_elem = elem
+        while current_elem is not None:
+            if current_elem.tag == HP_NAMESPACE + "header":
+                is_header = True
+                break
+            current_elem = parent_map.get(current_elem)
+
+        # Determine final attr value
+        if is_header:
+            final_attr = "header"
+        elif is_image:
+            final_attr = "image"
+        else:
+            final_attr = attr
+
         format_info = {"elem": dict(elem.attrib)}
+
+        # Add charPrIDRef if found anywhere in the hierarchy
+        if charPrIDRef is not None:
+            format_info["charPrIDRef"] = charPrIDRef
 
         if run is not None:
             run_fmt = dict(run.attrib)
+            
             rpr = run.find(HP_NAMESPACE + "rPr")
             if rpr is not None:
                 run_fmt["rPr"] = _element_to_dict(rpr)
+                # Also check for charPrIDRef in rPr if not found yet
+                if charPrIDRef is None and "charPrIDRef" in rpr.attrib:
+                    format_info["charPrIDRef"] = rpr.attrib["charPrIDRef"]
             format_info["run"] = run_fmt
 
         if paragraph is not None:
             para_fmt = dict(paragraph.attrib)
+            
             ppr = paragraph.find(HP_NAMESPACE + "pPr")
             if ppr is not None:
                 para_fmt["pPr"] = _element_to_dict(ppr)
+                # Also check for charPrIDRef in pPr if not found yet
+                if charPrIDRef is None and "charPrIDRef" in ppr.attrib:
+                    format_info["charPrIDRef"] = ppr.attrib["charPrIDRef"]
             format_info["paragraph"] = para_fmt
 
         segments.append(
             {
                 "index": idx,
                 "file": file_name,
-                "attr": attr,
+                "attr": final_attr,
                 "text": text,
                 "phrase_id": phrase_id,
                 "format": format_info,

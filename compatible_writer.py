@@ -174,10 +174,7 @@ def save_modified_hwpx_compatible(hwpx, output_path: str, original_path: str) ->
     
     # 수정된 콘텐츠 파일들 덮어쓰기 (네임스페이스 보존)
     for name, tree in hwpx.content_files.items():
-        # 텍스트 수정이 있었는지 확인 (modified_files 속성 확인)
-        with open("/Users/hanmook/Project/hwpxlib/debug.logs", "a") as log_file:
-            log_file.write(f"Processing file: {name}\n")
-            
+        # 텍스트 수정이 있었는지 확인 (modified_files 속성 확인)            
         has_text_modifications = hasattr(hwpx, 'modified_files') and name in getattr(hwpx, 'modified_files', set())
         
         if name in hwpx.original_xml_strings and not has_text_modifications:
