@@ -110,12 +110,16 @@ def save_modified_hwpx(hwpx, output_path: str, original_path: Optional[str] = No
     if use_compatible and original_path:
         try:
             from compatible_writer import save_modified_hwpx_compatible
+            print(f"[DEBUG] compatible_writer 호출 시작")
+            print(f"[DEBUG] modified_files: {getattr(hwpx, 'modified_files', set())}")
             save_modified_hwpx_compatible(hwpx, output_path, original_path)
+            print(f"[DEBUG] compatible_writer 호출 완료")
             return
         except ImportError:
             logging.debug("compatible_writer not available; falling back to ZIP writer")
         except Exception as exc:  # pragma: no cover - defensive
             logging.warning("compatible writer failed: %s", exc)
+            print(f"[DEBUG] compatible_writer 실패: {exc}")
 
     # Determine original XML strings or serialize trees
     version_xml = hwpx.original_xml_strings.get(
@@ -167,13 +171,17 @@ def save_modified_hwpx(hwpx, output_path: str, original_path: Optional[str] = No
             "Contents/content.hpf",
         }
 
-        for name, tree in hwpx.content_files.items():            
+        for name, tree in hwpx.content_files.items():
+            print(f"[DEBUG writer.py] 파일 {name} 처리 중...")
             if hasattr(hwpx, 'modified_files') and name in getattr(hwpx, 'modified_files', set()):
                 xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+                print(f"[DEBUG writer.py] {name}: 수정됨 - ElementTree 사용")
             elif name in hwpx.original_xml_strings:
                 xml_content = hwpx.original_xml_strings[name].encode("utf-8")
+                print(f"[DEBUG writer.py] {name}: 수정 안됨 - 원본 XML 사용")
             else:
                 xml_content = ET.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True)
+                print(f"[DEBUG writer.py] {name}: 기본 - ElementTree 사용")
 
             info = zipfile.ZipInfo(name)
             info.compress_type = compression_info.get(name, zipfile.ZIP_DEFLATED)
