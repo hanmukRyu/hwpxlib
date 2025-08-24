@@ -22,6 +22,33 @@ HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 # they can be restored from the Git history.
 
 
+def find_parent_paragraph(elem, tree):
+    """주어진 요소의 부모 문단(hp:p)을 찾습니다."""
+    # 먼저 모든 부모 요소를 찾습니다
+    parents = []
+    for parent in tree.iter():
+        if elem in parent or any(elem in child for child in parent.iter()):
+            parents.append(parent)
+    
+    # 부모 중에서 hp:p 태그를 찾습니다
+    for parent in parents:
+        if parent.tag.endswith('}p') or parent.tag == 'p':
+            return parent
+    
+    return None
+
+
+def remove_linesegarray_from_paragraph(para):
+    """문단에서 hp:linesegarray 요소를 제거합니다."""
+    elements_to_remove = []
+    for child in para:
+        if child.tag.endswith('}linesegarray') or child.tag == 'linesegarray':
+            elements_to_remove.append(child)
+    
+    for elem in elements_to_remove:
+        para.remove(elem)
+
+
 def enumerate_text_nodes(hwpx):
     """Yield all text nodes in ``hwpx`` along with their location information.
 
@@ -222,6 +249,7 @@ def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> Non
 
     # delete 액션을 먼저 수집하여 나중에 처리 (인덱스 변경 방지)
     delete_elements = []
+    modified_paragraphs = set()  # 수정된 문단들을 추적
     
     for seg in segments:
         key = (seg.get("file"), seg.get("index"))
@@ -242,29 +270,76 @@ def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> Non
                 if elem.text != new_text:
                     elem.text = new_text
                     hwpx.modified_files.add(seg["file"])
+                    # edit 작업이 발생한 문단 추적
+                    para = find_parent_paragraph(elem, hwpx.content_files[seg["file"]])
+                    if para is not None:
+                        modified_paragraphs.add((seg["file"], para))
+                    print(f"[DEBUG] {seg['file']} 파일이 modified_files에 추가됨")
             else:
                 if elem.tail != new_text:
                     elem.tail = new_text
                     hwpx.modified_files.add(seg["file"])
+                    # edit 작업이 발생한 문단 추적
+                    para = find_parent_paragraph(elem, hwpx.content_files[seg["file"]])
+                    if para is not None:
+                        modified_paragraphs.add((seg["file"], para))
+                    print(f"[DEBUG] {seg['file']} 파일이 modified_files에 추가됨")
     
-    # delete 액션 일괄 처리
+    # delete 액션 일괄 처리 - hp:run 전체를 삭제
     for seg, elem, attr in delete_elements:
         try:
-            # 부모 Element 찾기
             file_tree = hwpx.content_files[seg["file"]]
-            parent = None
+            
+            # hp:t의 부모인 hp:run 찾기
+            run_parent = None
             for parent_candidate in file_tree.iter():
                 if elem in parent_candidate:
-                    parent = parent_candidate
+                    # hp:t의 직접 부모가 hp:run인지 확인
+                    if parent_candidate.tag.endswith('}run') or parent_candidate.tag == 'run':
+                        run_parent = parent_candidate
                     break
             
-            if parent is not None:
-                parent.remove(elem)
-                hwpx.modified_files.add(seg["file"])
+            # hp:run의 부모(문단) 찾기
+            if run_parent is not None:
+                para_parent = None
+                for parent_candidate in file_tree.iter():
+                    if run_parent in parent_candidate:
+                        para_parent = parent_candidate
+                        break
+                
+                if para_parent is not None:
+                    # hp:run 전체 삭제
+                    para_parent.remove(run_parent)
+                    hwpx.modified_files.add(seg["file"])
+                    # delete 작업이 발생한 문단 추적
+                    modified_paragraphs.add((seg["file"], para_parent))
+                    print(f"[DEBUG] 세그먼트 {seg['index']}의 hp:run 전체 삭제됨")
+                else:
+                    print(f"Warning: Could not find paragraph parent for run at index {seg['index']} in {seg['file']}")
             else:
-                print(f"Warning: Could not find parent for element at index {seg['index']} in {seg['file']}")
+                # hp:run이 아닌 경우 기존 방식대로 처리
+                parent = None
+                for parent_candidate in file_tree.iter():
+                    if elem in parent_candidate:
+                        parent = parent_candidate
+                        break
+                
+                if parent is not None:
+                    parent.remove(elem)
+                    hwpx.modified_files.add(seg["file"])
+                    # delete 작업이 발생한 문단 추적
+                    para = find_parent_paragraph(elem, file_tree)
+                    if para is not None:
+                        modified_paragraphs.add((seg["file"], para))
+                else:
+                    print(f"Warning: Could not find parent for element at index {seg['index']} in {seg['file']}")
         except Exception as e:
             print(f"Error deleting element at index {seg['index']}: {e}")
+    
+    # 수정된 문단들의 hp:linesegarray 제거
+    for file_name, para in modified_paragraphs:
+        remove_linesegarray_from_paragraph(para)
+        print(f"[DEBUG] {file_name}의 문단에서 hp:linesegarray 제거됨")
 
     _save_modified_hwpx(hwpx, output_hwpx, input_hwpx)
 
