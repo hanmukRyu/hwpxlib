@@ -14,6 +14,7 @@ import os
 from reader import HWPXReader
 from text_extractor import extract_text
 from writer import save_modified_hwpx
+from namespace_preserver import extract_element_namespace_info, get_element_xml_string
 
 HP_NAMESPACE = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 
@@ -115,6 +116,12 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
     for idx, file_name, elem, attr, text in enumerate_text_nodes(hwpx):
         parent_map = parent_maps[file_name]
 
+        # 요소의 네임스페이스 정보 추출
+        elem_namespace_info = extract_element_namespace_info(elem)
+        
+        # 요소의 원본 XML 문자열 보존 (텍스트 수정 시 복원용)
+        elem_xml_string = get_element_xml_string(elem)
+
         # Ascend the tree to find the surrounding <hp:r> and <hp:p> elements.
         parent = parent_map.get(elem)
         run = None
@@ -212,6 +219,8 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
                 "text": text,
                 "phrase_id": phrase_id,
                 "format": format_info,
+                "namespace_info": elem_namespace_info,  # 네임스페이스 정보 추가
+                "original_xml": elem_xml_string,  # 원본 XML 문자열 추가
             }
         )
 
@@ -237,6 +246,10 @@ def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> Non
     hwpx = HWPXReader.read(input_hwpx)
     if not hasattr(hwpx, "modified_files"):
         hwpx.modified_files = set()
+    
+    # 네임스페이스 보존을 위한 딕셔너리 초기화
+    if not hasattr(hwpx, "namespace_preserved_elements"):
+        hwpx.namespace_preserved_elements = {}
 
     with open(segments_json, "r", encoding="utf-8") as fp:
         segments = json.load(fp)
@@ -266,23 +279,30 @@ def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> Non
         else:
             # edit 또는 insert 액션: 텍스트 수정
             new_text = seg.get("text", "")
+            
+            # 네임스페이스 정보가 있으면 보존
+            if "namespace_info" in seg:
+                file_key = seg["file"]
+                if file_key not in hwpx.namespace_preserved_elements:
+                    hwpx.namespace_preserved_elements[file_key] = {}
+                hwpx.namespace_preserved_elements[file_key][seg["index"]] = {
+                    "namespace_info": seg["namespace_info"],
+                    "original_xml": seg.get("original_xml", ""),
+                    "new_text": new_text,
+                    "attr": attr
+                }
+            
             if attr == "text":
                 if elem.text != new_text:
+                    print(f"[DEBUG] 세그먼트 {seg['index']} 텍스트 수정: '{elem.text}' → '{new_text}'")
                     elem.text = new_text
                     hwpx.modified_files.add(seg["file"])
-                    # edit 작업이 발생한 문단 추적
-                    para = find_parent_paragraph(elem, hwpx.content_files[seg["file"]])
-                    if para is not None:
-                        modified_paragraphs.add((seg["file"], para))
                     print(f"[DEBUG] {seg['file']} 파일이 modified_files에 추가됨")
             else:
                 if elem.tail != new_text:
+                    print(f"[DEBUG] 세그먼트 {seg['index']} tail 수정: '{elem.tail}' → '{new_text}'")
                     elem.tail = new_text
                     hwpx.modified_files.add(seg["file"])
-                    # edit 작업이 발생한 문단 추적
-                    para = find_parent_paragraph(elem, hwpx.content_files[seg["file"]])
-                    if para is not None:
-                        modified_paragraphs.add((seg["file"], para))
                     print(f"[DEBUG] {seg['file']} 파일이 modified_files에 추가됨")
     
     # delete 액션 일괄 처리 - hp:run 전체를 삭제

@@ -6,6 +6,7 @@
 import zipfile
 from typing import Dict, Optional
 import re
+from xml.etree import ElementTree as ET
 
 class CompatibleHwpxWriter:
     """원본 파일의 압축 방식을 유지하는 HWPX Writer"""
@@ -142,10 +143,65 @@ def extract_compression_info(hwpx_file_path: str) -> Dict[str, int]:
     
     return compression_info
 
+
+def preserve_namespaces_with_text_changes(original_xml: str, modified_tree: ET.ElementTree, namespace_elements: Dict) -> str:
+    """원본 XML의 네임스페이스를 보존하면서 텍스트 변경사항을 적용합니다.
+    
+    Args:
+        original_xml: 원본 XML 문자열
+        modified_tree: 수정된 ElementTree
+        namespace_elements: 네임스페이스 보존 정보
+        
+    Returns:
+        네임스페이스가 보존된 수정된 XML 문자열
+    """
+    result_xml = original_xml
+    
+    # 각 수정된 요소에 대해 텍스트만 교체
+    for index, elem_info in namespace_elements.items():
+        new_text = elem_info.get("new_text", "")
+        attr = elem_info.get("attr", "text")
+        original_elem_xml = elem_info.get("original_xml", "")
+        
+        if not original_elem_xml:
+            continue
+            
+        # XML 특수문자 이스케이프
+        escaped_new_text = (new_text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+        
+        # 원본 요소에서 텍스트 부분만 교체
+        if attr == "text":
+            # <tag>oldtext</tag> -> <tag>newtext</tag>
+            pattern = r'(>[^<]*?)([^<]+)([^<]*?</)'
+            replacement = rf'\1{escaped_new_text}\3'
+            
+            # 원본 XML에서 해당 요소 찾아서 교체
+            if original_elem_xml in result_xml:
+                # 원본 요소의 텍스트 부분만 교체
+                modified_elem_xml = re.sub(pattern, replacement, original_elem_xml, count=1)
+                result_xml = result_xml.replace(original_elem_xml, modified_elem_xml)
+        else:  # tail
+            # 요소 뒤의 텍스트 교체
+            pattern = r'(</[^>]+>)([^<]+)'
+            replacement = rf'\1{escaped_new_text}'
+            
+            if original_elem_xml in result_xml:
+                modified_elem_xml = re.sub(pattern, replacement, original_elem_xml, count=1)
+                result_xml = result_xml.replace(original_elem_xml, modified_elem_xml)
+    
+    return result_xml
+
+
 # 수정된 저장 함수
 def save_modified_hwpx_compatible(hwpx, output_path: str, original_path: str) -> None:
     """원본과 호환되는 방식으로 수정된 HWPX 파일을 저장합니다 (네임스페이스 보존)."""
     from xml.etree import ElementTree as ET
+    from namespace_preserver import apply_namespace_to_modified_xml
     
     # 원본 파일의 압축 정보 추출
     compression_info = extract_compression_info(original_path)
@@ -177,13 +233,25 @@ def save_modified_hwpx_compatible(hwpx, output_path: str, original_path: str) ->
         # 텍스트 수정이 있었는지 확인 (modified_files 속성 확인)            
         has_text_modifications = hasattr(hwpx, 'modified_files') and name in getattr(hwpx, 'modified_files', set())
         
+        print(f"[DEBUG] 파일 {name} 처리 중...")
+        print(f"[DEBUG] has_text_modifications: {has_text_modifications}")
+        print(f"[DEBUG] modified_files: {getattr(hwpx, 'modified_files', set())}")
+        
         if name in hwpx.original_xml_strings and not has_text_modifications:
             # 텍스트 수정이 없는 경우 원본 XML 문자열 사용 (네임스페이스 보존)
             xml_content = hwpx.original_xml_strings[name]
+            print(f"[DEBUG] {name}: 원본 XML 사용")
         else:
-            # 텍스트 수정이 있는 경우: 임시로 ElementTree 사용 (향후 개선 예정)
-            # TODO: 토큰 기반 방식의 정규식 패턴을 더 정교하게 개선 필요
+            # 텍스트 수정이 있는 경우: ElementTree로 직접 저장 (임시 해결책)
+            # TODO: 추후 네임스페이스 보존 방식 개선 필요
             xml_content = ET.tostring(tree.getroot(), encoding="unicode", xml_declaration=True)
+            print(f"[DEBUG] {name}: ElementTree로 새로 생성")
+            
+            # 실제 텍스트 확인
+            for elem in tree.iter():
+                if elem.text and "Several animals" in elem.text:
+                    print(f"[DEBUG] 찾음! 요소 {elem.tag}에 수정된 텍스트: {elem.text[:50]}...")
+                    
         files[name] = xml_content.encode("utf-8")
     
     # 핵심 파일들을 files에서 제거 (Writer가 별도로 처리)
