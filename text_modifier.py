@@ -298,12 +298,24 @@ def apply_segments(input_hwpx: str, segments_json: str, output_hwpx: str) -> Non
                     elem.text = new_text
                     hwpx.modified_files.add(seg["file"])
                     print(f"[DEBUG] {seg['file']} 파일이 modified_files에 추가됨")
+                    
+                    # edit 작업 시에도 수정된 문단 추적
+                    file_tree = hwpx.content_files[seg["file"]]
+                    para = find_parent_paragraph(elem, file_tree)
+                    if para is not None:
+                        modified_paragraphs.add((seg["file"], para))
             else:
                 if elem.tail != new_text:
                     print(f"[DEBUG] 세그먼트 {seg['index']} tail 수정: '{elem.tail}' → '{new_text}'")
                     elem.tail = new_text
                     hwpx.modified_files.add(seg["file"])
                     print(f"[DEBUG] {seg['file']} 파일이 modified_files에 추가됨")
+                    
+                    # edit 작업 시에도 수정된 문단 추적
+                    file_tree = hwpx.content_files[seg["file"]]
+                    para = find_parent_paragraph(elem, file_tree)
+                    if para is not None:
+                        modified_paragraphs.add((seg["file"], para))
     
     # delete 액션 일괄 처리 - hp:run 전체를 삭제
     for seg, elem, attr in delete_elements:
