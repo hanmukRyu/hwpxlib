@@ -159,27 +159,40 @@ def export_text_segments(hwpx_path: str, json_path: str) -> None:
 
         # Check if this is an image element (hp:pic)
         is_image = False
+        is_rectangle = False
         current_elem = elem
         while current_elem is not None:
             if current_elem.tag == HP_NAMESPACE + "pic":
                 is_image = True
                 break
+            elif current_elem.tag == HP_NAMESPACE + "rect":
+                is_rectangle = True
+                break
             current_elem = parent_map.get(current_elem)
 
-        # Check if this is within a header element (hp:header)
+        # Check if this is within a header element (hp:header, hp:footer)
         is_header = False
+        is_footer = False
         current_elem = elem
         while current_elem is not None:
             if current_elem.tag == HP_NAMESPACE + "header":
                 is_header = True
                 break
+
+            if current_elem.tag == HP_NAMESPACE + "footer":
+                is_footer = True
+                break            
             current_elem = parent_map.get(current_elem)
 
         # Determine final attr value
         if is_header:
             final_attr = "header"
+        elif is_footer:
+            final_attr = "footer"
         elif is_image:
             final_attr = "image"
+        elif is_rectangle:
+            final_attr = "rectangle"
         else:
             final_attr = attr
 
